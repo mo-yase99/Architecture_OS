@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const demoActions = [
   { id: 'demo-1', title: '3ds Max Practice', area: 'Learning', mins: 90, priority: 'P0', energy: 'High', status: 'Not started' },
@@ -19,10 +19,12 @@ export default function Home() {
   const [habitDone, setHabitDone] = useState<string[]>([]);
   const [mode, setMode] = useState<'demo' | 'notion' | 'error'>('demo');
   const [recommendation, setRecommendation] = useState<any>(null);
+  const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/myos/tasks').then(r => r.json()).then(data => {
       if (data.mode === 'notion' && Array.isArray(data.tasks)) { setTasks(data.tasks.map((t: any) => ({ ...t, mins: t.minutes ?? 30, energy: 'Medium' }))); setMode('notion'); }
+      else if (data.mode === 'error') setMode('error');
     }).catch(() => setMode('error'));
   }, []);
 
@@ -35,16 +37,27 @@ export default function Home() {
   const nextAction = recommendation ?? tasks.find(t => !['Done', 'Completed'].includes(t.status) && (t.mins ?? t.minutes ?? 0) <= minutes) ?? tasks.find(t => !['Done', 'Completed'].includes(t.status));
   const score = Math.round(((completed / Math.max(tasks.length, 1)) * 60) + ((habitDone.length / habits.length) * 40));
 
-  const toggleTask = (task: any) => setTasks(current => current.map(t => t.id === task.id ? { ...t, status: ['Done', 'Completed'].includes(t.status) ? 'Not started' : 'Done' } : t));
+  async function toggleTask(task: any) {
+    const nextStatus = ['Done', 'Completed'].includes(task.status) ? 'Not started' : 'Done';
+    setTasks(current => current.map(t => t.id === task.id ? { ...t, status: nextStatus } : t));
+    if (!String(task.id).startsWith('demo-') && mode === 'notion') {
+      setSaving(task.id);
+      try {
+        const res = await fetch('/api/myos/tasks/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pageId: task.id, status: nextStatus }) });
+        if (!res.ok) throw new Error('save failed');
+      } catch { setTasks(current => current.map(t => t.id === task.id ? { ...t, status: task.status } : t)); }
+      finally { setSaving(null); }
+    }
+  }
 
   return (
     <main className="shell">
-      <aside className="sidebar"><div className="brand"><span className="mark">M</span><div><b>MYOS</b><small>Control Panel</small></div></div>{['Today','Work','Learning','Portfolio','Content','Habits','Finance','AI Core'].map(x => <button key={x} className={tab===x?'nav active':'nav'} onClick={()=>setTab(x)}>{x}</button>)}<div className="side-foot">3D First · v1.1</div></aside>
+      <aside className="sidebar"><div className="brand"><span className="mark">M</span><div><b>MYOS</b><small>Control Panel</small></div></div>{['Today','Work','Learning','Portfolio','Content','Habits','Finance','AI Core'].map(x => <button key={x} className={tab===x?'nav active':'nav'} onClick={()=>setTab(x)}>{x}</button>)}<div className="side-foot">3D First · v1.2</div></aside>
       <section className="content">
         <header className="top"><div><p className="eyebrow">SUNDAY · AUGUST 30, 2026</p><h1>{tab === 'Today' ? 'Good morning, Mohamed.' : tab}</h1><p className="muted">Your personal operating system. One day, one clear next action.</p></div><div className="controls"><label>Energy<select value={energy} onChange={e=>setEnergy(e.target.value)}><option>Low</option><option>Medium</option><option>High</option></select></label><label>Time<select value={minutes} onChange={e=>setMinutes(Number(e.target.value))}><option value={60}>60m</option><option value={120}>2h</option><option value={180}>3h</option><option value={240}>4h</option></select></label></div></header>
         <div className="grid metrics"><div className="card hero"><span>EXECUTION SCORE</span><strong>{score}%</strong><p>{mode === 'notion' ? 'Live from Notion tasks.' : mode === 'error' ? 'Integration check needed.' : 'Demo mode — connect Notion for live data.'}</p></div><div className="card"><span>TODAY'S TIME</span><strong>{minutes}m</strong><p>Available focus window</p></div><div className="card"><span>LEARNING</span><strong>3D FIRST</strong><p>3ds Max → Corona → V-Ray</p></div><div className="card"><span>ACTIVE WORK</span><strong>{tasks.filter(t => t.area !== 'Learning').length}</strong><p>Work · Portfolio · Content</p></div></div>
         <div className="grid main-grid">
-          <div className="card next"><div className="card-head"><div><span className="label">⚡ NEXT BEST ACTION</span><h2>{nextAction?.title ?? 'No action available'}</h2></div><span className="pill">{nextAction?.mins ?? nextAction?.minutes ?? 0} min</span></div><p>{nextAction?.area ?? '—'} · {nextAction?.energy ?? energy} energy · {nextAction?.priority ?? '—'}</p><button className="primary" onClick={()=>nextAction && toggleTask(nextAction)}>{nextAction && ['Done','Completed'].includes(nextAction.status) ? 'Completed ✓' : 'Start / Complete'}</button></div>
+          <div className="card next"><div className="card-head"><div><span className="label">⚡ NEXT BEST ACTION</span><h2>{nextAction?.title ?? 'No action available'}</h2></div><span className="pill">{nextAction?.mins ?? nextAction?.minutes ?? 0} min</span></div><p>{nextAction?.area ?? '—'} · {nextAction?.energy ?? energy} energy · {nextAction?.priority ?? '—'}</p><button className="primary" disabled={saving===nextAction?.id} onClick={()=>nextAction && toggleTask(nextAction)}>{saving===nextAction?.id ? 'Saving…' : nextAction && ['Done','Completed'].includes(nextAction.status) ? 'Completed ✓' : 'Start / Complete'}</button></div>
           <div className="card"><div className="card-head"><span className="label">🎯 TODAY</span><span>{completed}/{tasks.length}</span></div>{tasks.map(a=><button className="task" key={a.id} onClick={()=>toggleTask(a)}><span className={['Done','Completed'].includes(a.status)?'check checked':'check'}>✓</span><div><b>{a.title}</b><small>{a.area} · {a.mins ?? a.minutes ?? 0}m</small></div><em>{a.priority}</em></button>)}</div>
           <div className="card"><div className="card-head"><span className="label">🔁 HABITS</span><span>{habitDone.length}/{habits.length}</span></div>{habits.map(h=><button className="habit" key={h} onClick={()=>setHabitDone(habitDone.includes(h)?habitDone.filter(x=>x!==h):[...habitDone,h])}><span className={habitDone.includes(h)?'check checked':'check'}>✓</span>{h}</button>)}</div>
           <div className="card roadmap"><span className="label">🎓 LEARNING ROADMAP</span><div className="road"><b>01</b><div><strong>3ds Max</strong><small>Primary · In Progress</small></div><span>→</span></div><div className="road"><b>02</b><div><strong>Corona</strong><small>Next · Rendering</small></div><span>→</span></div><div className="road"><b>03</b><div><strong>V-Ray</strong><small>Next · Rendering</small></div><span>→</span></div><div className="locked"><b>🔒 Revit / BIM</b><span>Unlock after 3D Gate</span></div></div>
