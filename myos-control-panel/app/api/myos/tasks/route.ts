@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
-const NOTION_VERSION = '2022-06-28';
+// Notion's current data-source query API.
+const NOTION_VERSION = '2025-09-03';
 const DEFAULT_TASKS_DATA_SOURCE_ID = '63aea792-2001-4e91-a670-02f29696671b';
 
 type NotionPage = { id: string; properties: Record<string, any> };
