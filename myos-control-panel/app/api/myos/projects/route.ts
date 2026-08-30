@@ -1,0 +1,4 @@
+import { NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+export async function GET(){const s=await createClient();const {data:{user}}=await s.auth.getUser();if(!user)return NextResponse.json({error:'Unauthorized'},{status:401});const {data,error}=await s.from('myos_projects').select('*').eq('user_id',user.id).order('updated_at',{ascending:false});return NextResponse.json({projects:data??[],error:error?.message})}
+export async function POST(req:Request){const s=await createClient();const {data:{user}}=await s.auth.getUser();if(!user)return NextResponse.json({error:'Unauthorized'},{status:401});const b=await req.json();const {data,error}=await s.from('myos_projects').insert({...b,user_id:user.id}).select().single();return NextResponse.json({project:data,error:error?.message},{status:error?400:201})}
