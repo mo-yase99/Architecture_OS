@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 
 const activeTaskStatuses = ['todo', 'in_progress']
 const closedRfiStatuses = ['closed', 'answered', 'resolved']
+const priorityRank: Record<string, number> = { critical: 0, high: 1, normal: 2, low: 3 }
 
 export async function POST(req: Request) {
   const s = await createClient()
@@ -20,15 +21,16 @@ export async function POST(req: Request) {
   const { data: sections } = await s.from('boq_sections').select('id').eq('project_id', project_id)
   const sectionIds = (sections || []).map((x: any) => x.id)
 
-  const [boqResult, materialResult, procurementResult, progressResult, issueResult, rfiResult, jobResult, taskResult, drawingResult, priceResult] = await Promise.all([
+  const [boqResult, materialResult, procurementResult, progressResult, issueResult, rfiResult, jobResult, taskResult, allTaskResult, drawingResult, priceResult] = await Promise.all([
     sectionIds.length ? s.from('boq_items').select('id,item_code,item_name,unit,quantity,unit_rate,material_rate,labor_rate,subtotal,material_cost,labor_cost,status').in('section_id', sectionIds).limit(500) : Promise.resolve({ data: [], error: null } as any),
-    s.from('boq_materials').select('id,boq_item_id,material_id,material_name,unit,quantity,unit_rate,total_cost,supplier').limit(1000),
+    sectionIds.length ? s.from('boq_materials').select('id,boq_item_id,material_id,material_name,unit,quantity,unit_rate,total_cost,supplier').in('boq_item_id', (await s.from('boq_items').select('id').in('section_id', sectionIds).limit(1000)).data?.map((x: any) => x.id) || []).limit(1000) : Promise.resolve({ data: [], error: null } as any),
     s.from('project_procurement').select('id,material_id,item_name,quantity,unit,supplier,required_at,ordered_at,delivered_at,status,notes').eq('project_id', project_id).limit(300),
     s.from('project_progress_logs').select('id,log_date,activity,quantity,unit,percent_complete,notes').eq('project_id', project_id).order('log_date', { ascending: false }).limit(100),
     s.from('site_issues').select('id,title,severity,status,drawing_reference,description,proposed_action,rfi_required').eq('project_id', project_id).eq('status', 'open').limit(100),
     s.from('project_rfis').select('id,rfi_no,subject,priority,status,due_date,response').eq('project_id', project_id).limit(100),
     s.from('file_processing_jobs').select('id,file_name,file_type,status,progress,error_message').eq('project_id', project_id).in('status', ['queued', 'processing']).limit(30),
     s.from('tasks').select('id,title,status,priority,due_date,notes').eq('project_id', project_id).in('status', activeTaskStatuses).order('due_date', { ascending: true }).limit(100),
+    s.from('tasks').select('id,title,status,priority,due_date,notes').eq('project_id', project_id).limit(500),
     s.from('drawing_revisions').select('id,drawing_number,title,discipline,revision,status,revision_date,change_summary,ai_review_status').eq('project_id', project_id).limit(200),
     s.from('material_price_snapshots').select('material_id,material_name,unit,price,currency,supplier,source_name,observed_at,confidence').order('observed_at', { ascending: false }).limit(500),
   ])
@@ -41,12 +43,14 @@ export async function POST(req: Request) {
   const rfis = rfiResult.data || []
   const jobs = jobResult.data || []
   const tasks = taskResult.data || []
+  const allTasks = allTaskResult.data || []
   const drawings = drawingResult.data || []
   const prices = priceResult.data || []
 
   const actions: any[] = []
   const today = new Date()
-  const taskTitles = new Set(tasks.map((t: any) => String(t.title || '').trim().toLowerCase()))
+  const activeTaskTitles = new Set(tasks.map((t: any) => String(t.title || '').trim().toLowerCase()))
+  const allTaskTitles = new Set(allTasks.map((t: any) => String(t.title || '').trim().toLowerCase()))
   const addAction = (a: any) => actions.push({ ...a, id: `${a.type}:${a.ref_id || actions.length + 1}` })
 
   for (const job of jobs) addAction({ type: 'process_job', ref_id: job.id, priority: 'high', title: `Complete file processing: ${job.file_name}`, rationale: `File intelligence is ${job.status} at ${job.progress ?? 0}%.`, payload: { job_id: job.id } })
@@ -55,7 +59,7 @@ export async function POST(req: Request) {
     const severity = String(issue.severity || '').toLowerCase()
     if (['critical', 'high'].includes(severity)) {
       const title = `Resolve site issue: ${issue.title}`
-      if (!taskTitles.has(title.toLowerCase())) addAction({ type: 'create_task', ref_id: issue.id, priority: severity, title, rationale: issue.proposed_action || issue.description || 'High-severity open site issue.', payload: { title, priority: severity, notes: `Linked issue ${issue.id}. ${issue.proposed_action || ''}` } })
+      if (!activeTaskTitles.has(title.toLowerCase()) && !allTaskTitles.has(title.toLowerCase())) addAction({ type: 'create_task', ref_id: issue.id, priority: severity, title, rationale: issue.proposed_action || issue.description || 'High-severity open site issue.', payload: { title, priority: severity, notes: `Linked issue ${issue.id}. ${issue.proposed_action || ''}` } })
     }
   }
 
@@ -64,9 +68,9 @@ export async function POST(req: Request) {
     if (closedRfiStatuses.includes(status)) continue
     const due = rfi.due_date ? new Date(`${rfi.due_date}T23:59:59`) : null
     const days = due ? Math.ceil((due.getTime() - today.getTime()) / 86400000) : null
-    if (days !== null && days <= 3 || ['critical', 'high'].includes(String(rfi.priority || '').toLowerCase())) {
+    if ((days !== null && days <= 3) || ['critical', 'high'].includes(String(rfi.priority || '').toLowerCase())) {
       const title = `Respond to RFI: ${rfi.subject}`
-      if (!taskTitles.has(title.toLowerCase())) addAction({ type: 'create_task', ref_id: rfi.id, priority: String(rfi.priority || 'high'), title, rationale: days !== null && days < 0 ? 'RFI is overdue.' : 'RFI requires near-term engineering response.', payload: { title, priority: String(rfi.priority || 'high'), due_date: rfi.due_date, notes: `Linked RFI ${rfi.rfi_no || rfi.id}.` } })
+      if (!activeTaskTitles.has(title.toLowerCase()) && !allTaskTitles.has(title.toLowerCase())) addAction({ type: 'create_task', ref_id: rfi.id, priority: String(rfi.priority || 'high'), title, rationale: days !== null && days < 0 ? 'RFI is overdue.' : 'RFI requires near-term engineering response.', payload: { title, priority: String(rfi.priority || 'high'), due_date: rfi.due_date, notes: `Linked RFI ${rfi.rfi_no || rfi.id}.` } })
     }
   }
 
@@ -90,7 +94,7 @@ export async function POST(req: Request) {
   const openProcurement = procurement.filter((x: any) => !['delivered', 'complete', 'closed'].includes(String(x.status || '').toLowerCase()))
   if (openProcurement.length >= 5) addAction({ type: 'review_procurement', priority: 'normal', title: `Review ${openProcurement.length} pending procurement items`, rationale: 'Multiple procurement items remain open; verify required dates and delivery risk.', payload: { count: openProcurement.length } })
 
-  actions.sort((a, b) => ({ critical: 0, high: 1, normal: 2, low: 3 } as any)[a.priority] - ({ critical: 0, high: 1, normal: 2, low: 3 } as any)[b.priority])
+  actions.sort((a, b) => (priorityRank[a.priority] ?? 9) - (priorityRank[b.priority] ?? 9))
 
   let execution: any = null
   if (mode === 'execute' || mode === 'repair') {
@@ -100,10 +104,8 @@ export async function POST(req: Request) {
       const { data, error } = await s.from('tasks').insert(rows).select('id,title,status,priority,due_date')
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
       execution = { created_tasks: data || [], count: data?.length || 0 }
-      for (const a of executable) {
-        await s.from('myos_engineering_actions').insert({ user_id: user.id, project_id, action_type: a.type, title: a.title, rationale: a.rationale, mode, status: 'executed', payload: a.payload, result: execution, source_refs: [a.ref_id], executed_at: new Date().toISOString() })
-      }
-    }
+      for (const a of executable) await s.from('myos_engineering_actions').insert({ user_id: user.id, project_id, action_type: a.type, title: a.title, rationale: a.rationale, mode, status: 'executed', payload: a.payload, result: execution, source_refs: [a.ref_id], executed_at: new Date().toISOString() })
+    } else execution = { created_tasks: [], count: 0, note: 'No safe create-task action required.' }
   }
 
   if (mode === 'analyze') {
