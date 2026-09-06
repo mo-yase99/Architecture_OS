@@ -25,7 +25,7 @@ export async function POST(req: Request) {
     s.from('drawing_revisions').select('id,drawing_number,title,discipline,revision,status').eq('project_id', project).limit(30),
     s.from('boq_items').select('id,item_code,item_name,description,unit,quantity,unit_rate,labor_rate,material_rate,subtotal,material_cost,labor_cost,status').eq('project_id', project).limit(50),
     s.from('site_issues').select('id,title,severity,status,drawing_reference').eq('project_id', project).eq('status', 'open').limit(30),
-    s.from('site_materials').select('*').eq('project_id', project).limit(30),
+    s.from('materials').select('id,name,category,unit,default_rate,supplier').limit(30),
     s.from('file_processing_jobs').select('id,file_name,status,progress').eq('project_id', project).in('status', ['queued', 'processing']).limit(10),
   ])
 
