@@ -6,7 +6,9 @@ import { getMyosContext } from '@/lib/myos-context'
 export async function POST(req: Request) {
   try {
     const cookieStore = await cookies()
-    const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!, {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    const supabase = createServerClient(supabaseUrl, supabaseKey, {
       cookies: { getAll: () => cookieStore.getAll(), setAll: (items) => { try { items.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {} } }
     })
     const { data: { user } } = await supabase.auth.getUser()
@@ -25,12 +27,7 @@ export async function POST(req: Request) {
       activeSessionId = session.id
     }
 
-    const { data: history } = await supabase.from('myos_ai_messages')
-      .select('role,content')
-      .eq('session_id', activeSessionId)
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(20)
+    const { data: history } = await supabase.from('myos_ai_messages').select('role,content').eq('session_id', activeSessionId).eq('user_id', user.id).order('created_at', { ascending: false }).limit(20)
     await supabase.from('myos_ai_messages').insert({ session_id: activeSessionId, user_id: user.id, role: 'user', content: message })
 
     const context = await getMyosContext(supabase, user.id)
