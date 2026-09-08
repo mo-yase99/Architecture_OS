@@ -1,0 +1,55 @@
+import { NextResponse } from 'next/server'
+import { createServerClient } from '@supabase/ssr'
+
+export async function POST(req: Request) {
+  try {
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+      {
+        cookies: {
+          getAll: () => [],
+          setAll: () => {},
+        },
+      }
+    )
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+
+    const body = await req.json()
+    const message = String(body.message ?? '').trim()
+    if (!message) return NextResponse.json({ ok: false, error: 'Message is required' }, { status: 400 })
+
+    const apiKey = process.env.OPENAI_API_KEY
+    if (!apiKey) return NextResponse.json({ ok: false, error: 'OPENAI_API_KEY is not configured' }, { status: 503 })
+
+    const context = body.context ?? {}
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: process.env.MYOS_AI_MODEL || 'gpt-5.6-luna',
+        input: [
+          {
+            role: 'system',
+            content: `You are MYOS AI Core, the decision and execution layer of Mohamed Yasser's personal and professional operating system. Be practical, concise, action-oriented, and prioritize real execution over generic advice. Respect the user's architecture/design/site-engineering context. When useful, return a short decision, next actions, risks, and what should be captured in MYOS. Current MYOS context: ${JSON.stringify(context)}`,
+          },
+          { role: 'user', content: message },
+        ],
+      }),
+    })
+
+    const data = await response.json()
+    if (!response.ok) {
+      return NextResponse.json({ ok: false, error: data?.error?.message || 'OpenAI request failed' }, { status: response.status })
+    }
+
+    return NextResponse.json({ ok: true, text: data.output_text || 'No response text returned.', model: data.model || process.env.MYOS_AI_MODEL || 'gpt-5.6-luna' })
+  } catch (error) {
+    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : 'AI request failed' }, { status: 500 })
+  }
+}
