@@ -18,9 +18,14 @@ export async function proxy(request: NextRequest) {
     },
   })
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user && request.nextUrl.pathname !== '/login') return NextResponse.redirect(new URL('/login', request.url))
-  if (user && request.nextUrl.pathname === '/login') return NextResponse.redirect(new URL('/', request.url))
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user && request.nextUrl.pathname !== '/login') return NextResponse.redirect(new URL('/login', request.url))
+    if (user && request.nextUrl.pathname === '/login') return NextResponse.redirect(new URL('/', request.url))
+  } catch {
+    // Never take the entire application down because an auth refresh fails.
+    if (request.nextUrl.pathname !== '/login') return NextResponse.redirect(new URL('/login', request.url))
+  }
   return response
 }
 
