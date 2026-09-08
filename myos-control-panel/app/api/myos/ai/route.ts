@@ -24,13 +24,22 @@ export async function POST(req: Request) {
       if (error) throw error
       activeSessionId = session.id
     }
+
+    const { data: history } = await supabase.from('myos_ai_messages')
+      .select('role,content')
+      .eq('session_id', activeSessionId)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(20)
     await supabase.from('myos_ai_messages').insert({ session_id: activeSessionId, user_id: user.id, role: 'user', content: message })
 
     const context = await getMyosContext(supabase, user.id)
     const system = `You are MYOS AI Core, the decision and execution layer of Mohamed Yasser's personal and professional operating system. Be practical, concise, action-oriented, and grounded in the supplied data. Connect projects, execution, learning, habits, engineering work, portfolio and content when relevant. Never invent data. When the user asks what to do next, prioritize a small number of executable actions. Current MYOS data: ${JSON.stringify(context)}`
+    const conversation = (history || []).reverse().map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
+    conversation.push({ role: 'user', content: message })
     const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: process.env.MYOS_AI_MODEL || 'gpt-5.6-luna', input: [{ role: 'system', content: system }, { role: 'user', content: message }] })
+      body: JSON.stringify({ model: process.env.MYOS_AI_MODEL || 'gpt-5.6-luna', input: [{ role: 'system', content: system }, ...conversation] })
     })
     const data = await response.json()
     if (!response.ok) return NextResponse.json({ ok: false, error: data?.error?.message || 'OpenAI request failed' }, { status: response.status })
