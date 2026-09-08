@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
-const baseSteps = ['decision-engine', 'daily-assistant', 'knowledge/sync', 'operating-loop']
+const baseSteps = ['engineering-agent', 'daily-assistant', 'knowledge/sync', 'operating-loop']
 
 export async function POST(req: Request) {
   const supabase = await createClient()
@@ -35,26 +35,28 @@ export async function POST(req: Request) {
 
   const results: Record<string, unknown> = {}
   try {
-    results.decision = await call('/api/myos/site/intelligence/decision-engine', { project_id, mode })
+    results.agent = await call('/api/myos/site/intelligence/engineering-agent', { project_id, mode })
     results.daily = await call('/api/myos/site/intelligence/daily-assistant', { project_id })
     results.knowledge = await call('/api/myos/site/intelligence/knowledge/sync', { project_id })
     results.loop = await call('/api/myos/site/intelligence/operating-loop', { project_id, program })
 
-    const decisionData: any = (results.decision as any)?.data || {}
+    const agentData: any = (results.agent as any)?.data || {}
     const dailyData: any = (results.daily as any)?.data || {}
     const loopData: any = (results.loop as any)?.data || {}
     const summary = {
       steps: baseSteps,
       mode,
-      decision_next_action: decisionData.decision?.next_action?.title || null,
-      decision_actions: decisionData.decision?.actions?.length || 0,
-      executed_tasks: decisionData.execution?.count || 0,
-      daily_next_action: dailyData.next_action?.title || null,
+      agent_next_action: agentData.agent?.next_action?.title || null,
+      agent_actions: agentData.agent?.actions?.length || 0,
+      evidence_count: agentData.agent?.evidence_count || 0,
+      executed_tasks: agentData.execution?.count || 0,
+      daily_next_action: dailyData.next_action?.title || dailyData.next_action || null,
       loop_next_action: loopData.next_action?.title || null,
+      ai_summary_enabled: Boolean(agentData.ai_summary?.enabled),
       completed_at: new Date().toISOString(),
     }
     await supabase.from('myos_engineering_runs').update({ status: 'completed', completed_at: new Date().toISOString(), summary }).eq('id', run.id).eq('user_id', user.id)
-    return NextResponse.json({ run_id: run.id, project, mode, summary, results })
+    return NextResponse.json({ run_id: run.id, project, mode, program, summary, results })
   } catch (error: any) {
     const summary = { steps: baseSteps, mode, error: error?.message || 'Orchestration failed' }
     await supabase.from('myos_engineering_runs').update({ status: 'failed', completed_at: new Date().toISOString(), summary }).eq('id', run.id).eq('user_id', user.id)
