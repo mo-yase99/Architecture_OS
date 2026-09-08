@@ -8,14 +8,7 @@ export async function POST(req: Request) {
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-      {
-        cookies: {
-          getAll: () => cookieStore.getAll(),
-          setAll: (cookiesToSet) => {
-            try { cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {}
-          },
-        },
-      }
+      { cookies: { getAll: () => cookieStore.getAll(), setAll: (items) => { try { items.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {} } } }
     )
 
     const { data: { user } } = await supabase.auth.getUser()
@@ -23,10 +16,20 @@ export async function POST(req: Request) {
 
     const body = await req.json()
     const message = String(body.message ?? '').trim()
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId : null
     if (!message) return NextResponse.json({ ok: false, error: 'Message is required' }, { status: 400 })
 
     const apiKey = process.env.OPENAI_API_KEY
     if (!apiKey) return NextResponse.json({ ok: false, error: 'OPENAI_API_KEY is not configured' }, { status: 503 })
+
+    let activeSessionId = sessionId
+    if (!activeSessionId) {
+      const { data: session, error } = await supabase.from('myos_ai_sessions').insert({ user_id: user.id, title: message.slice(0, 80) }).select('id').single()
+      if (error) throw error
+      activeSessionId = session.id
+    }
+
+    await supabase.from('myos_ai_messages').insert({ session_id: activeSessionId, user_id: user.id, role: 'user', content: message })
 
     const context = body.context ?? {}
     const response = await fetch('https://api.openai.com/v1/responses', {
@@ -43,7 +46,13 @@ export async function POST(req: Request) {
 
     const data = await response.json()
     if (!response.ok) return NextResponse.json({ ok: false, error: data?.error?.message || 'OpenAI request failed' }, { status: response.status })
-    return NextResponse.json({ ok: true, text: data.output_text || 'No response text returned.', model: data.model || process.env.MYOS_AI_MODEL || 'gpt-5.6-luna' })
+
+    const text = data.output_text || 'No response text returned.'
+    const model = data.model || process.env.MYOS_AI_MODEL || 'gpt-5.6-luna'
+    await supabase.from('myos_ai_messages').insert({ session_id: activeSessionId, user_id: user.id, role: 'assistant', content: text, model })
+    await supabase.from('myos_ai_sessions').update({ updated_at: new Date().toISOString() }).eq('id', activeSessionId).eq('user_id', user.id)
+
+    return NextResponse.json({ ok: true, text, model, sessionId: activeSessionId })
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : 'AI request failed' }, { status: 500 })
   }
