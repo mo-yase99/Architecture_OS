@@ -1,4 +1,4 @@
-import { type NextRequest, NextResponse } from '@supabase/ssr'
+import { type NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 
 export async function proxy(request: NextRequest) {
