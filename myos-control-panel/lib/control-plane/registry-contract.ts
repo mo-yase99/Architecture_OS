@@ -1,10 +1,8 @@
 /**
- * MYOS Control Plane — R1 Canonical Registry Contract
+ * MYOS Control Plane — R1/R2 Canonical Registry Contracts
  *
- * R1-T01 establishes the semantic contract only.
- * It intentionally does not prescribe a new database table for Products,
- * Relationships, or Integrations. Physical persistence is decided by the
- * following implementation tasks after existing structures are reconciled.
+ * R1 established Product and Project persistence.
+ * R2 establishes typed cross-project relationship semantics and persistence.
  */
 
 export const MYOS_PRODUCT_CODES = [
@@ -29,6 +27,47 @@ export const MYOS_RELATIONSHIP_TYPES = [
 
 export type MyosRelationshipType = (typeof MYOS_RELATIONSHIP_TYPES)[number]
 
+export const MYOS_RELATIONSHIP_LIFECYCLE_STATES = [
+  'planned',
+  'active',
+  'blocked',
+  'inactive',
+  'deprecated',
+] as const
+
+export type MyosRelationshipLifecycleState =
+  (typeof MYOS_RELATIONSHIP_LIFECYCLE_STATES)[number]
+
+export const MYOS_RELATIONSHIP_PARTICIPANT_TYPES = [
+  'PRODUCT',
+  'PROJECT',
+  'DOMAIN_PROJECT',
+] as const
+
+export type MyosRelationshipParticipantType =
+  (typeof MYOS_RELATIONSHIP_PARTICIPANT_TYPES)[number]
+
+export const MYOS_SYMMETRIC_RELATIONSHIP_TYPES = [
+  'SHARED_SERVICE',
+  'SHARED_KNOWLEDGE',
+  'SHARED_DATA',
+  'SHARED_BRAND',
+] as const
+
+export const MYOS_DIRECTIONAL_RELATIONSHIP_TYPES = [
+  'DEPENDENCY',
+  'INTEGRATION',
+] as const
+
+export const MYOS_RELATIONSHIP_PARTICIPANT_PAIRS = [
+  ['PRODUCT', 'PRODUCT'],
+  ['PRODUCT', 'PROJECT'],
+  ['PRODUCT', 'DOMAIN_PROJECT'],
+  ['PROJECT', 'PROJECT'],
+  ['PROJECT', 'DOMAIN_PROJECT'],
+  ['DOMAIN_PROJECT', 'DOMAIN_PROJECT'],
+] as const
+
 export type RegistryEntityType =
   | 'PRODUCT'
   | 'PROJECT'
@@ -45,11 +84,6 @@ export type RegistryOwnership =
   | 'BUSINESS_LAB'
   | 'SHARED'
 
-/**
- * Canonical product identity. Persistence is intentionally abstract here.
- * R1-T02 decides whether the existing portfolio representation can safely
- * back this contract or whether a dedicated product entity is required.
- */
 export interface CanonicalProduct {
   id: string
   code: MyosProductCode
@@ -66,10 +100,6 @@ export interface CanonicalProduct {
   updatedAt: string
 }
 
-/**
- * Canonical MYOS project identity. This is NOT the Architecture OS domain
- * project entity. A domain project is referenced through myos_project_links.
- */
 export interface CanonicalMyosProject {
   id: string
   productId: string
@@ -87,22 +117,18 @@ export interface CanonicalMyosProject {
 
 export interface CanonicalRelationship {
   id: string
-  sourceEntityType: RegistryEntityType
+  sourceEntityType: MyosRelationshipParticipantType
   sourceEntityId: string
   relationshipType: MyosRelationshipType
-  targetEntityType: RegistryEntityType
+  targetEntityType: MyosRelationshipParticipantType
   targetEntityId: string
-  status: string
+  owner: 'MYOS'
+  status: MyosRelationshipLifecycleState
   description?: string | null
   createdAt: string
   updatedAt: string
 }
 
-/**
- * Integration records describe a system-to-system contract/state only.
- * Secrets, tokens, passwords, service-role keys, and credentials are never
- * part of this contract.
- */
 export interface CanonicalIntegration {
   id: string
   sourceProductId: string
@@ -126,10 +152,6 @@ export interface MyosProjectDomainBridge {
   matchMethod: string
 }
 
-/**
- * Canonical ownership rules for R1.
- * Domain operational data remains owned by the domain product.
- */
 export const REGISTRY_OWNERSHIP = {
   PRODUCT: 'MYOS',
   MYOS_PROJECT: 'MYOS',
@@ -143,9 +165,6 @@ export const REGISTRY_OWNERSHIP = {
   CROSS_PROJECT_COORDINATION: 'MYOS',
 } as const
 
-/**
- * Explicit boundary invariant used by subsequent R1 tasks.
- */
 export const MYOS_PROJECT_IS_NOT_DOMAIN_PROJECT = true as const
 
 export const MYOS_PRODUCTS = [
