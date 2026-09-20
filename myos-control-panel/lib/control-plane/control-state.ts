@@ -17,8 +17,11 @@ import {
   type MyosControlStatePriority,
   type MyosControlStateReference,
   type MyosControlStateStatus,
-  type MyosProjectControlSnapshot,
-  type MyosCrossProjectControlSnapshot,
+  MYOS_CONTROL_CONTEXT_SCOPES,
+  type MyosControlContextScope,
+  type MyosProjectControlContext,
+  type MyosProductControlContext,
+  type MyosCrossProjectControlContext,
 } from './control-state-contract'
 
 type ControlStateRow = {
