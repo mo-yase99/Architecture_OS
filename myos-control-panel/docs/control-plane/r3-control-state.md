@@ -169,9 +169,9 @@ No service-role bypass is introduced.
 
 ## Migrations
 
-- 20260920171500_create_myos_control_state.sql
-- 20260920172000_add_control_state_reference_values.sql
-- 20260920172500_harden_control_state_ownership.sql
+- 20260920141420_create_myos_control_state.sql
+- 20260920141507_add_control_state_reference_values.sql
+- 20260920141616_harden_control_state_ownership.sql
 
 ## Service
 
