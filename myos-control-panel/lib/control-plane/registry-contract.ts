@@ -181,4 +181,6 @@ export const CONTROL_PLANE_REGISTRY_API = {
   projects: '/api/control-plane/projects',
   relationships: '/api/control-plane/relationships',
   integrations: '/api/control-plane/integrations',
+  controlState: '/api/control-plane/control-state',
+  controlContext: '/api/control-plane/control-context',
 } as const
