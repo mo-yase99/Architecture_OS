@@ -511,89 +511,239 @@ export async function updateControlItem(
   return toControlItem(data as ControlItemRow)
 }
 
-async function getProjectSnapshot(
-  supabase: SupabaseClient,
-  userId: string,
-  projectId: string,
-): Promise<MyosProjectControlSnapshot> {
-  const project = await assertProjectOwnedByUser(supabase, userId, projectId)
-  const state = await listControlStates(supabase, userId, projectId)
-  const controlState = state[0] ?? null
-  const items = controlState ? await listItems(supabase, userId, projectId) : []
 
-  const { data: product, error: productError } = await supabase
-    .from('myos_products')
-    .select('id,code,name')
-    .eq('id', project.product_id)
-    .maybeSingle()
-  if (productError) throw productError
+type AggregationProjectRow = {
+  id: string
+  product_id: string | null
+  project_code: string | null
+  name: string
+  owner: string
+  status: string
+}
+type AggregationProductRow = { id: string; code: string; name: string; status: string }
+type AggregationLinkRow = { myos_project_id: string; engineering_project_id: string }
+type AggregationControlStateRow = ControlStateRow
+type AggregationControlItemRow = ControlItemRow
 
-  const directRelationships = await listCanonicalRelationships(supabase, userId, {
-    entityType: 'PROJECT',
-    entityId: projectId,
-  })
-
-  const { data: link, error: linkError } = await supabase
-    .from('myos_project_links')
-    .select('engineering_project_id')
-    .eq('user_id', userId)
-    .eq('myos_project_id', projectId)
-    .maybeSingle()
-  if (linkError) throw linkError
-
-  let domainRelationships: CanonicalRelationship[] = []
-  if (link?.engineering_project_id) {
-    domainRelationships = await listCanonicalRelationships(supabase, userId, {
-      entityType: 'DOMAIN_PROJECT',
-      entityId: link.engineering_project_id,
-    })
+function compareStrings(a: string, b: string) { return a < b ? -1 : a > b ? 1 : 0 }
+function compareRelationships(a: CanonicalRelationship, b: CanonicalRelationship) {
+  return compareStrings(a.relationshipType, b.relationshipType)
+    || compareStrings(a.sourceEntityType, b.sourceEntityType)
+    || compareStrings(a.sourceEntityId, b.sourceEntityId)
+    || compareStrings(a.targetEntityType, b.targetEntityType)
+    || compareStrings(a.targetEntityId, b.targetEntityId)
+    || compareStrings(a.id, b.id)
+}
+function compareItems(a: MyosControlItem, b: MyosControlItem) {
+  return compareStrings(a.createdAt, b.createdAt) || compareStrings(a.id, b.id)
+}
+function isHistoricalStatus(status: string | null) {
+  return status === 'COMPLETED' || status === 'ARCHIVED'
+}
+function normalizeRegistryStatus(status: string | null) {
+  return status?.trim().toLowerCase() ?? ''
+}
+function shouldIncludeProject(scope: MyosControlContextScope, registryStatus: string, state: MyosControlState | null) {
+  if (scope === 'all') return true
+  if (state) return !isHistoricalStatus(state.status)
+  const normalized = normalizeRegistryStatus(registryStatus)
+  return normalized !== 'completed' && normalized !== 'archived'
+}
+function lifecycleFor(scope: MyosControlContextScope, registryStatus: string, state: MyosControlState | null) {
+  if (!state) return {
+    source: 'PROJECT_REGISTRY' as const,
+    state: registryStatus || null,
+    included: shouldIncludeProject(scope, registryStatus, state),
+    reason: 'MISSING_STATE' as const,
   }
-
-  const relationshipMap = new Map<string, CanonicalRelationship>()
-  for (const relationship of [...directRelationships, ...domainRelationships]) {
-    relationshipMap.set(relationship.id, relationship)
+  return {
+    source: 'CONTROL_STATE' as const,
+    state: state.status,
+    included: shouldIncludeProject(scope, registryStatus, state),
+    reason: scope === 'all' ? 'HISTORICAL_SCOPE' as const : 'ACTIVE_SCOPE' as const,
   }
+}
+function emptyStatusCounts(): Record<MyosControlStateStatus, number> {
+  return { PLANNED: 0, ACTIVE: 0, PAUSED: 0, COMPLETED: 0, ARCHIVED: 0 }
+}
+function emptyPriorityCounts(): Record<MyosControlStatePriority, number> {
+  return { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 }
+}
+function emptyHealthCounts(): Record<MyosControlStateHealth, number> {
+  return { HEALTHY: 0, ATTENTION: 0, AT_RISK: 0, CRITICAL: 0 }
+}
+function buildProductIndicators(projects: MyosProjectControlContext[]) {
+  const statusCounts = emptyStatusCounts()
+  const priorityCounts = emptyPriorityCounts()
+  const healthCounts = emptyHealthCounts()
+  let activeBlockerCount = 0
+  let activeRiskCount = 0
+  let nextActionCount = 0
+  for (const project of projects) {
+    if (project.controlState) {
+      statusCounts[project.controlState.status] += 1
+      priorityCounts[project.controlState.priority] += 1
+      healthCounts[project.controlState.health] += 1
+    }
+    activeBlockerCount += project.activeBlockers.length
+    activeRiskCount += project.activeRisks.length
+    if (project.nextAction) nextActionCount += 1
+  }
+  return { projectCount: projects.length, statusCounts, priorityCounts, healthCounts, activeBlockerCount, activeRiskCount, nextActionCount }
+}
 
+export type ControlContextOptions = {
+  scope?: MyosControlContextScope
+  projectId?: string
+  productId?: string
+}
+
+async function loadAggregationInputs(supabase: SupabaseClient, userId: string) {
+  const [projectResult, productResult, stateResult, itemResult, linkResult, relationshipResult] = await Promise.all([
+    supabase.from('myos_projects').select('id,product_id,project_code,name,owner,status').eq('user_id', userId).not('product_id', 'is', null).not('project_code', 'is', null),
+    supabase.from('myos_products').select('id,code,name,status'),
+    supabase.from('myos_project_control_states').select('id,project_id,owner,status,priority,health,current_sprint_id,current_sprint_source,current_sprint_reference,current_sprint_title,last_checkpoint_id,last_checkpoint_source,last_checkpoint_reference,last_checkpoint_title,created_at,updated_at').eq('user_id', userId),
+    supabase.from('myos_control_items').select('id,project_id,control_state_id,owner,item_type,status,title,description,resolution,relationship_id,created_at,updated_at,resolved_at').eq('user_id', userId),
+    supabase.from('myos_project_links').select('myos_project_id,engineering_project_id').eq('user_id', userId),
+    listCanonicalRelationships(supabase, userId),
+  ])
+  for (const result of [projectResult, productResult, stateResult, itemResult, linkResult]) {
+    if (result.error) throw result.error
+  }
+  return {
+    projects: (projectResult.data ?? []) as AggregationProjectRow[],
+    products: (productResult.data ?? []) as AggregationProductRow[],
+    states: (stateResult.data ?? []) as AggregationControlStateRow[],
+    items: (itemResult.data ?? []) as AggregationControlItemRow[],
+    links: (linkResult.data ?? []) as AggregationLinkRow[],
+    relationships: relationshipResult,
+  }
+}
+
+function relationshipTouchesEntities(relationship: CanonicalRelationship, entities: Set<string>) {
+  const source = \${relationship.sourceEntityType}:\${relationship.sourceEntityId}
+  const target = \${relationship.targetEntityType}:\${relationship.targetEntityId}
+  return entities.has(source) || entities.has(target)
+}
+
+function buildProjectContext(
+  project: AggregationProjectRow,
+  product: AggregationProductRow | null,
+  state: MyosControlState | null,
+  items: MyosControlItem[],
+  link: AggregationLinkRow | null,
+  relationships: CanonicalRelationship[],
+  scope: MyosControlContextScope,
+): MyosProjectControlContext {
+  const entities = new Set<string>([
+    \`PROJECT:\${project.id}\`,
+    ...(product ? [\`PRODUCT:\${product.id}\`] : []),
+    ...(link ? [\`DOMAIN_PROJECT:\${link.engineering_project_id}\`] : []),
+  ])
+  const relevantRelationships = relationships.filter((relationship) => relationshipTouchesEntities(relationship, entities)).sort(compareRelationships)
   return {
     project: {
       id: project.id,
-      productId: project.product_id,
-      projectCode: project.project_code,
+      productId: project.product_id as string,
+      projectCode: project.project_code as string,
       name: project.name,
       owner: project.owner,
+      registryStatus: project.status,
     },
-    product: product ?? null,
-    controlState,
-    activeBlockers: items.filter((item) => item.type === 'BLOCKER' && item.status === 'ACTIVE'),
-    activeRisks: items.filter((item) => item.type === 'RISK' && item.status === 'ACTIVE'),
-    nextAction: items.find((item) => item.type === 'NEXT_ACTION' && item.status === 'ACTIVE') ?? null,
-    relevantRelationships: [...relationshipMap.values()],
+    product: product ? { id: product.id, code: product.code, name: product.name } : null,
+    controlState: state,
+    lifecycle: lifecycleFor(scope, project.status, state),
+    activeBlockers: items.filter((item) => item.type === 'BLOCKER' && item.status === 'ACTIVE').sort(compareItems),
+    activeRisks: items.filter((item) => item.type === 'RISK' && item.status === 'ACTIVE').sort(compareItems),
+    nextAction: items.filter((item) => item.type === 'NEXT_ACTION' && item.status === 'ACTIVE').sort(compareItems)[0] ?? null,
+    currentSprint: state?.currentSprint ?? null,
+    lastCheckpoint: state?.lastCheckpoint ?? null,
+    relevantRelationships,
+    relevantIntegrationRelationships: relevantRelationships.filter((relationship) => relationship.relationshipType === 'INTEGRATION').sort(compareRelationships),
   }
 }
 
-export async function getProjectControlSnapshot(
+function buildProductContext(product: AggregationProductRow, projects: MyosProjectControlContext[]): MyosProductControlContext {
+  const associatedProjects = projects.filter((project) => project.project.productId === product.id).sort((a, b) =>
+    compareStrings(a.project.projectCode, b.project.projectCode) || compareStrings(a.project.id, b.project.id)
+  )
+  return {
+    product: { id: product.id, code: product.code, name: product.name, status: product.status },
+    projects: associatedProjects,
+    indicators: buildProductIndicators(associatedProjects),
+  }
+}
+
+export async function getProjectControlContext(
   supabase: SupabaseClient,
   userId: string,
   projectId: string,
-) {
-  return getProjectSnapshot(supabase, userId, projectId)
+  options: Omit<ControlContextOptions, 'projectId' | 'productId'> = {},
+): Promise<MyosProjectControlContext> {
+  if (!isUuid(projectId)) throw new ControlStateValidationError('Project ID must be a valid UUID')
+  const scope = options.scope ?? 'active'
+  if (!isOneOf(MYOS_CONTROL_CONTEXT_SCOPES, scope)) throw new ControlStateValidationError('Invalid control-context scope')
+  const inputs = await loadAggregationInputs(supabase, userId)
+  const project = inputs.projects.find((candidate) => candidate.id === projectId)
+  if (!project) throw new ControlStateValidationError('MYOS project not found', 404)
+  const product = inputs.products.find((candidate) => candidate.id === project.product_id) ?? null
+  const stateRow = inputs.states.find((candidate) => candidate.project_id === projectId) ?? null
+  const state = stateRow ? toControlState(stateRow) : null
+  const items = inputs.items.filter((item) => item.project_id === projectId).map(toControlItem)
+  const context = buildProjectContext(project, product, state, items, inputs.links.find((link) => link.myos_project_id === projectId) ?? null, inputs.relationships, scope)
+  if (!context.lifecycle.included && scope === 'active') throw new ControlStateValidationError('Project is outside the active control-context scope', 404)
+  return context
 }
 
-export async function getCrossProjectControlSnapshot(
+export async function getCrossProjectControlContext(
   supabase: SupabaseClient,
   userId: string,
-): Promise<MyosCrossProjectControlSnapshot> {
-  const { data: projects, error } = await supabase
-    .from('myos_projects')
-    .select('id')
-    .eq('user_id', userId)
-    .order('updated_at', { ascending: false })
-  if (error) throw error
-
-  const snapshots: MyosProjectControlSnapshot[] = []
-  for (const project of projects ?? []) {
-    snapshots.push(await getProjectSnapshot(supabase, userId, project.id))
+  options: ControlContextOptions = {},
+): Promise<MyosCrossProjectControlContext> {
+  const scope = options.scope ?? 'active'
+  if (!isOneOf(MYOS_CONTROL_CONTEXT_SCOPES, scope)) throw new ControlStateValidationError('Invalid control-context scope')
+  const inputs = await loadAggregationInputs(supabase, userId)
+  let projects = inputs.projects
+  if (options.projectId) {
+    if (!isUuid(options.projectId)) throw new ControlStateValidationError('Project ID must be a valid UUID')
+    projects = projects.filter((project) => project.id === options.projectId)
   }
+  if (options.productId) {
+    if (!isUuid(options.productId)) throw new ControlStateValidationError('Product ID must be a valid UUID')
+    projects = projects.filter((project) => project.product_id === options.productId)
+  }
+  const projectContexts = projects.map((project) => {
+    const product = inputs.products.find((candidate) => candidate.id === project.product_id) ?? null
+    const stateRow = inputs.states.find((candidate) => candidate.project_id === project.id) ?? null
+    const state = stateRow ? toControlState(stateRow) : null
+    const items = inputs.items.filter((item) => item.project_id === project.id).map(toControlItem)
+    return buildProjectContext(project, product, state, items, inputs.links.find((link) => link.myos_project_id === project.id) ?? null, inputs.relationships, scope)
+  }).filter((context) => context.lifecycle.included).sort((a, b) =>
+    compareStrings(a.product?.code ?? '', b.product?.code ?? '') || compareStrings(a.project.projectCode, b.project.projectCode) || compareStrings(a.project.id, b.project.id)
+  )
+  const projectEntityIds = new Set<string>()
+  for (const context of projectContexts) {
+    projectEntityIds.add(\`PROJECT:\${context.project.id}\`)
+    projectEntityIds.add(\`PRODUCT:\${context.project.productId}\`)
+    const link = inputs.links.find((candidate) => candidate.myos_project_id === context.project.id)
+    if (link) projectEntityIds.add(\`DOMAIN_PROJECT:\${link.engineering_project_id}\`)
+  }
+  const relevantRelationships = inputs.relationships.filter((relationship) => relationshipTouchesEntities(relationship, projectEntityIds)).sort(compareRelationships)
+  const productContexts = inputs.products.filter((product) => projectContexts.some((project) => project.project.productId === product.id)).map((product) => buildProductContext(product, projectContexts)).sort((a, b) =>
+    compareStrings(a.product.code, b.product.code) || compareStrings(a.product.id, b.product.id)
+  )
+  return {
+    scope,
+    projects: projectContexts,
+    products: productContexts,
+    relevantRelationships,
+    relevantIntegrationRelationships: relevantRelationships.filter((relationship) => relationship.relationshipType === 'INTEGRATION').sort(compareRelationships),
+  }
+}
 
-  return { projects: snapshots }
+export async function getProjectControlSnapshot(supabase: SupabaseClient, userId: string, projectId: string) {
+  return getProjectControlContext(supabase, userId, projectId)
+}
+export async function getCrossProjectControlSnapshot(supabase: SupabaseClient, userId: string) {
+  return getCrossProjectControlContext(supabase, userId)
 }
