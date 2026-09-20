@@ -17,7 +17,7 @@ function errorResponse(error: unknown, fallback: string) {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ projectId: string }> },
 ) {
   try {
