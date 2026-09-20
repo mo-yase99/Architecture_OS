@@ -319,6 +319,10 @@ export async function updateCanonicalRelationship(
   id: string,
   input: UpdateRelationshipInput,
 ): Promise<CanonicalRelationship> {
+  if (!isUuid(id)) {
+    throw new RelationshipValidationError('Relationship ID must be a valid UUID')
+  }
+
   if (input.status !== undefined && !isLifecycleState(input.status)) {
     throw new RelationshipValidationError('Invalid relationship lifecycle state')
   }
@@ -348,13 +352,20 @@ export async function updateCanonicalRelationship(
     )
   }
 
-  const patch: { status?: MyosRelationshipLifecycleState; description?: string | null } = {}
+  const patch: {
+    status?: MyosRelationshipLifecycleState
+    description?: string | null
+    updated_at?: string
+  } = {}
+
   if (input.status !== undefined) patch.status = input.status
   if (input.description !== undefined) patch.description = input.description
 
   if (Object.keys(patch).length === 0) {
     return toCanonical(current as RelationshipRow)
   }
+
+  patch.updated_at = new Date().toISOString()
 
   const { data, error } = await supabase
     .from('myos_relationships')
