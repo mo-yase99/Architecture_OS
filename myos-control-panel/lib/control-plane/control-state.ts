@@ -732,9 +732,13 @@ export async function getCrossProjectControlContext(
     if (link) projectEntityIds.add(\`DOMAIN_PROJECT:\${link.engineering_project_id}\`)
   }
   const relevantRelationships = inputs.relationships.filter((relationship) => relationshipTouchesEntities(relationship, projectEntityIds)).sort(compareRelationships)
-  const productContexts = inputs.products.filter((product) => projectContexts.some((project) => project.project.productId === product.id)).map((product) => buildProductContext(product, projectContexts)).sort((a, b) =>
-    compareStrings(a.product.code, b.product.code) || compareStrings(a.product.id, b.product.id)
-  )
+  const visibleProductIds = new Set(projectContexts.map((project) => project.project.productId))
+  const productContexts = inputs.products
+    .filter((product) => visibleProductIds.has(product.id) || (!options.projectId && !options.productId))
+    .map((product) => buildProductContext(product, projectContexts))
+    .sort((a, b) =>
+      compareStrings(a.product.code, b.product.code) || compareStrings(a.product.id, b.product.id)
+    )
   return {
     scope,
     projects: projectContexts,
