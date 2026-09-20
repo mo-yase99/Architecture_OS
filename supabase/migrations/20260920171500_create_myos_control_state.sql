@@ -61,9 +61,7 @@ create table public.myos_control_items (
   constraint myos_control_items_status_check
     check (status in ('ACTIVE', 'RESOLVED', 'DISMISSED')),
   constraint myos_control_items_resolution_state_check
-    check ((status = 'ACTIVE' and resolved_at is null) or (status in ('RESOLVED', 'DISMISSED'))),
-  constraint myos_control_items_state_project_check
-    foreign key (control_state_id) references public.myos_project_control_states(id) on delete cascade
+    check ((status = 'ACTIVE' and resolved_at is null) or (status in ('RESOLVED', 'DISMISSED')))
 );
 
 create index myos_control_items_user_id_idx
