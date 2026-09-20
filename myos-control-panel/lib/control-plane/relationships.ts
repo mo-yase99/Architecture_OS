@@ -65,7 +65,7 @@ const participantRank: Record<MyosRelationshipParticipantType, number> = {
   DOMAIN_PROJECT: 2,
 }
 
-function isParticipantType(value: string): value is MyosRelationshipParticipantType {
+function isUuid(value: string) {\n  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)\n}\n\nfunction isParticipantType(value: string): value is MyosRelationshipParticipantType {
   return (MYOS_RELATIONSHIP_PARTICIPANT_TYPES as readonly string[]).includes(value)
 }
 
