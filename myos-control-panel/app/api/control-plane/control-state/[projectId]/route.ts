@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import {
   ControlStateValidationError,
-  getProjectControlSnapshot,
+  getProjectControlContext,
   updateControlState,
 } from '@/lib/control-plane/control-state'
 
@@ -26,8 +26,9 @@ export async function GET(
     if (!user) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
 
     const { projectId } = await params
-    const snapshot = await getProjectControlSnapshot(supabase, user.id, projectId)
-    return NextResponse.json({ ok: true, snapshot })
+    const scope = new URL(request.url).searchParams.get('scope') ?? 'active'
+    const context = await getProjectControlContext(supabase, user.id, projectId, { scope: scope as 'active' | 'all' })
+    return NextResponse.json({ ok: true, context })
   } catch (error) {
     return errorResponse(error, 'Failed to load project Control State')
   }
