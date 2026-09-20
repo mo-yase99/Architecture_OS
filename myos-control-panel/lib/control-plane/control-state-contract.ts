@@ -93,6 +93,8 @@ export type MyosControlItem = {
   resolvedAt?: string | null
 }
 
+import type { CanonicalRelationship } from './registry-contract'
+
 export type MyosProjectControlSnapshot = {
   project: {
     id: string
@@ -101,11 +103,16 @@ export type MyosProjectControlSnapshot = {
     name: string
     owner: string
   }
+  product: {
+    id: string
+    code: string
+    name: string
+  } | null
   controlState: MyosControlState | null
   activeBlockers: MyosControlItem[]
   activeRisks: MyosControlItem[]
   nextAction: MyosControlItem | null
-  relevantRelationships: string[]
+  relevantRelationships: CanonicalRelationship[]
 }
 
 export type MyosCrossProjectControlSnapshot = {
