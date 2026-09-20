@@ -30,9 +30,11 @@ type ControlStateRow = {
   health: MyosControlStateHealth
   current_sprint_id: string | null
   current_sprint_source: MyosControlReferenceSource | null
+  current_sprint_reference: string | null
   current_sprint_title: string | null
   last_checkpoint_id: string | null
   last_checkpoint_source: MyosControlReferenceSource | null
+  last_checkpoint_reference: string | null
   last_checkpoint_title: string | null
   created_at: string
   updated_at: string
@@ -131,10 +133,11 @@ function validateReference(reference: ReferenceInput | null | undefined, label: 
 function toReference(
   id: string | null,
   source: MyosControlReferenceSource | null,
+  reference: string | null,
   title: string | null,
 ): MyosControlStateReference | null {
-  if (!id || !source) return null
-  return { id, source, reference: id, title }
+  if (!id || !source || !reference) return null
+  return { id, source, reference, title }
 }
 
 function toReferenceFromInput(input: ReferenceInput | null | undefined) {
@@ -155,8 +158,8 @@ function toControlState(row: ControlStateRow): MyosControlState {
     status: row.status,
     priority: row.priority,
     health: row.health,
-    currentSprint: toReference(row.current_sprint_id, row.current_sprint_source, row.current_sprint_title),
-    lastCheckpoint: toReference(row.last_checkpoint_id, row.last_checkpoint_source, row.last_checkpoint_title),
+    currentSprint: toReference(row.current_sprint_id, row.current_sprint_source, row.current_sprint_reference, row.current_sprint_title),
+    lastCheckpoint: toReference(row.last_checkpoint_id, row.last_checkpoint_source, row.last_checkpoint_reference, row.last_checkpoint_title),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -211,7 +214,7 @@ async function assertControlStateOwnedByUser(
 ) {
   const { data, error } = await supabase
     .from('myos_project_control_states')
-    .select('id,project_id,owner,status,priority,health,current_sprint_id,current_sprint_source,current_sprint_title,last_checkpoint_id,last_checkpoint_source,last_checkpoint_title,created_at,updated_at')
+    .select('id,project_id,owner,status,priority,health,current_sprint_id,current_sprint_source,current_sprint_reference,current_sprint_title,last_checkpoint_id,last_checkpoint_source,last_checkpoint_reference,last_checkpoint_title,created_at,updated_at')
     .eq('project_id', projectId)
     .eq('user_id', userId)
     .maybeSingle()
@@ -304,7 +307,7 @@ export async function listControlStates(
 ) {
   let query = supabase
     .from('myos_project_control_states')
-    .select('id,project_id,owner,status,priority,health,current_sprint_id,current_sprint_source,current_sprint_title,last_checkpoint_id,last_checkpoint_source,last_checkpoint_title,created_at,updated_at')
+    .select('id,project_id,owner,status,priority,health,current_sprint_id,current_sprint_source,current_sprint_reference,current_sprint_title,last_checkpoint_id,last_checkpoint_source,last_checkpoint_reference,last_checkpoint_title,created_at,updated_at')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
 
@@ -345,12 +348,14 @@ export async function createControlState(
       health,
       current_sprint_id: input.currentSprint?.id ?? input.currentSprint?.reference ?? null,
       current_sprint_source: input.currentSprint?.source ?? null,
+      current_sprint_reference: input.currentSprint?.reference ?? null,
       current_sprint_title: input.currentSprint?.title ?? null,
       last_checkpoint_id: input.lastCheckpoint?.id ?? input.lastCheckpoint?.reference ?? null,
       last_checkpoint_source: input.lastCheckpoint?.source ?? null,
+      last_checkpoint_reference: input.lastCheckpoint?.reference ?? null,
       last_checkpoint_title: input.lastCheckpoint?.title ?? null,
     })
-    .select('id,project_id,owner,status,priority,health,current_sprint_id,current_sprint_source,current_sprint_title,last_checkpoint_id,last_checkpoint_source,last_checkpoint_title,created_at,updated_at')
+    .select('id,project_id,owner,status,priority,health,current_sprint_id,current_sprint_source,current_sprint_reference,current_sprint_title,last_checkpoint_id,last_checkpoint_source,last_checkpoint_reference,last_checkpoint_title,created_at,updated_at')
     .single()
 
   if (error) {
@@ -384,12 +389,14 @@ export async function updateControlState(
     const ref = toReferenceFromInput(input.currentSprint)
     patch.current_sprint_id = ref?.id ?? null
     patch.current_sprint_source = ref?.source ?? null
+    patch.current_sprint_reference = ref?.reference ?? null
     patch.current_sprint_title = ref?.title ?? null
   }
   if (input.lastCheckpoint !== undefined) {
     const ref = toReferenceFromInput(input.lastCheckpoint)
     patch.last_checkpoint_id = ref?.id ?? null
     patch.last_checkpoint_source = ref?.source ?? null
+    patch.last_checkpoint_reference = ref?.reference ?? null
     patch.last_checkpoint_title = ref?.title ?? null
   }
 
@@ -401,7 +408,7 @@ export async function updateControlState(
     .update(patch)
     .eq('project_id', projectId)
     .eq('user_id', userId)
-    .select('id,project_id,owner,status,priority,health,current_sprint_id,current_sprint_source,current_sprint_title,last_checkpoint_id,last_checkpoint_source,last_checkpoint_title,created_at,updated_at')
+    .select('id,project_id,owner,status,priority,health,current_sprint_id,current_sprint_source,current_sprint_reference,current_sprint_title,last_checkpoint_id,last_checkpoint_source,last_checkpoint_reference,last_checkpoint_title,created_at,updated_at')
     .single()
 
   if (error) throw error
